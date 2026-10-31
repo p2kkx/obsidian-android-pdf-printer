@@ -12,7 +12,11 @@ export interface Ctx {
   maxW: number; // nutzbare Seitenbreite in pt
 }
 
-type C = any;
+export type PdfNode = Record<string, unknown>;
+type Style = Record<string, unknown>;
+interface TextRun extends PdfNode {
+  text: string;
+}
 
 const SKIP_TAGS = new Set([
   "script", "style", "svg", "audio", "video", "iframe", "button", "canvas", "input", "object", "embed",
@@ -50,14 +54,14 @@ function isInlineEl(el: Element): boolean {
 // ---- Sammler für Fließtext + Bilder ---------------------------------------
 
 class Acc {
-  blocks: C[] = [];
-  runs: C[] = [];
-  constructor(private ctx: Ctx, private para: C) {}
+  blocks: PdfNode[] = [];
+  runs: TextRun[] = [];
+  constructor(private ctx: Ctx, private para: Style) {}
 
-  text(t: string, style: C) {
-    if (t) this.runs.push({ text: t, ...style });
+  text(t: string, style: Style) {
+    if (t) this.runs.push({ ...style, text: t });
   }
-  raw(run: C) {
+  raw(run: TextRun) {
     this.runs.push(run);
   }
   image(el: Element) {
@@ -70,20 +74,20 @@ class Acc {
     this.runs = [];
     if (r.length) this.blocks.push({ text: r, ...this.para });
   }
-  done(): C[] {
+  done(): PdfNode[] {
     this.flush();
     return this.blocks;
   }
 }
 
-function trimRuns(runs: C[]): C[] {
+function trimRuns(runs: TextRun[]): TextRun[] {
   const r = runs.map((x) => ({ ...x }));
-  while (r.length && typeof r[0].text === "string" && r[0].text !== "\n") {
+  while (r.length && r[0].text !== "\n") {
     r[0].text = r[0].text.replace(/^\s+/, "");
     if (r[0].text === "") r.shift();
     else break;
   }
-  while (r.length && typeof r[r.length - 1].text === "string") {
+  while (r.length) {
     const last = r[r.length - 1];
     if (last.text === "\n") {
       r.pop();
@@ -96,7 +100,7 @@ function trimRuns(runs: C[]): C[] {
   return r;
 }
 
-function walkInline(node: Node, style: C, acc: Acc) {
+function walkInline(node: Node, style: Style, acc: Acc) {
   if (node.nodeType === 3) {
     acc.text((node.textContent || "").replace(/\s+/g, " "), style);
     return;
@@ -105,7 +109,7 @@ function walkInline(node: Node, style: C, acc: Acc) {
   const el = node as Element;
   if (shouldSkip(el)) return;
   const tag = el.tagName.toLowerCase();
-  let s = style;
+  let s: Style = style;
   switch (tag) {
     case "br":
       acc.raw({ text: "\n" });
@@ -148,7 +152,7 @@ function walkInline(node: Node, style: C, acc: Acc) {
 
 // ---- Bilder ----------------------------------------------------------------
 
-function imageBlock(el: Element, info: ImgInfo, ctx: Ctx): C {
+function imageBlock(el: Element, info: ImgInfo, ctx: Ctx): PdfNode {
   let wpt = info.w * 0.75;
   let hpt = info.h * 0.75;
   const attr = parseFloat(el.getAttribute("width") || "");
@@ -163,7 +167,7 @@ function imageBlock(el: Element, info: ImgInfo, ctx: Ctx): C {
 
 // ---- Blöcke ----------------------------------------------------------------
 
-export function blocksOf(parent: Node, ctx: Ctx, depth = 0): C[] {
+export function blocksOf(parent: Node, ctx: Ctx, depth = 0): PdfNode[] {
   const acc = new Acc(ctx, { margin: [0, 0, 0, 6] });
   for (const n of Array.from(parent.childNodes)) {
     if (n.nodeType === 3) {
@@ -185,7 +189,7 @@ export function blocksOf(parent: Node, ctx: Ctx, depth = 0): C[] {
 
 const HEAD_SIZES = [22, 18, 15, 13, 12, 11];
 
-function blockFor(el: Element, ctx: Ctx, depth: number): C[] {
+function blockFor(el: Element, ctx: Ctx, depth: number): PdfNode[] {
   const tag = el.tagName.toLowerCase();
 
   if (/^h[1-6]$/.test(tag)) {
@@ -247,20 +251,20 @@ function checkboxSvg(checked: boolean): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"><rect x="0.5" y="0.5" width="11" height="11" rx="2" fill="none" stroke="#555" stroke-width="1"/>${tick}</svg>`;
 }
 
-function listBlock(el: Element, ctx: Ctx, ordered: boolean, depth: number): C {
-  const items: C[] = [];
+function listBlock(el: Element, ctx: Ctx, ordered: boolean, depth: number): PdfNode {
+  const items: PdfNode[] = [];
   let n = parseInt(el.getAttribute("start") || "1", 10);
   if (!(n >= 0)) n = 1;
   for (const li of Array.from(el.children)) {
     if (li.tagName.toLowerCase() !== "li") continue;
-    const checkbox = li.querySelector(":scope > input[type=checkbox]") as HTMLInputElement | null;
+    const checkbox = li.querySelector<HTMLInputElement>(":scope > input[type=checkbox]");
     const isTask = li.classList.contains("task-list-item") || !!checkbox;
     const dataTask = li.getAttribute("data-task");
     const checked = !!(checkbox && (checkbox.checked || checkbox.hasAttribute("checked"))) ||
       li.classList.contains("is-checked") || (dataTask != null && dataTask !== "" && dataTask !== " ");
 
     const acc = new Acc(ctx, { margin: [0, 0, 0, 2] });
-    const nested: C[] = [];
+    const nested: PdfNode[] = [];
     for (const ch of Array.from(li.childNodes)) {
       if (ch.nodeType === 1) {
         const c = ch as Element;
@@ -280,9 +284,9 @@ function listBlock(el: Element, ctx: Ctx, ordered: boolean, depth: number): C {
       walkInline(ch, {}, acc);
     }
     const content = acc.done().concat(nested);
-    const body: C = content.length ? { stack: content } : { text: "" };
+    const body: PdfNode = content.length ? { stack: content } : { text: "" };
 
-    let marker: C;
+    let marker: PdfNode;
     if (isTask) marker = { svg: checkboxSvg(checked), width: 12, margin: [0, 2, 0, 0] };
     else if (ordered) marker = { text: `${n}.`, width: 18, alignment: "right" };
     else marker = { text: "•", width: 12, alignment: "center" };
@@ -299,12 +303,12 @@ function listBlock(el: Element, ctx: Ctx, ordered: boolean, depth: number): C {
 
 // ---- Tabellen --------------------------------------------------------------
 
-function tableBlock(el: Element, ctx: Ctx): C[] {
-  const rows: C[][] = [];
+function tableBlock(el: Element, ctx: Ctx): PdfNode[] {
+  const rows: unknown[][] = [];
   let headerRows = 0;
   for (const tr of Array.from(el.querySelectorAll("tr"))) {
     const isHead = !!tr.closest("thead");
-    const cells: C[] = [];
+    const cells: unknown[] = [];
     for (const cell of Array.from(tr.children)) {
       const t = cell.tagName.toLowerCase();
       if (t !== "td" && t !== "th") continue;
@@ -328,7 +332,7 @@ function tableBlock(el: Element, ctx: Ctx): C[] {
   }];
 }
 
-export function noteToContent(root: Element, ctx: Ctx): C[] {
+export function noteToContent(root: Element, ctx: Ctx): PdfNode[] {
   return blocksOf(root, ctx);
 }
 
@@ -337,8 +341,8 @@ export function noteToContent(root: Element, ctx: Ctx): C[] {
 export const PAGE_MARGINS: [number, number, number, number] = [40, 45, 40, 45];
 export const CONTENT_WIDTH = 595.28 - PAGE_MARGINS[0] - PAGE_MARGINS[2];
 
-export function buildDoc(notes: C[][], newPagePerNote: boolean): C {
-  const content: C[] = [];
+export function buildDoc(notes: PdfNode[][], newPagePerNote: boolean): PdfNode {
+  const content: PdfNode[] = [];
   for (const blocks of notes) {
     if (!blocks.length) continue;
     if (content.length) {
@@ -353,6 +357,6 @@ export function buildDoc(notes: C[][], newPagePerNote: boolean): C {
     content,
     defaultStyle: { font: "Roboto", fontSize: 11, lineHeight: 1.2, color: "#000000" },
     // Überschrift nie allein am Seitenende
-    pageBreakBefore: (node: any, following: any[]) => !!node.headlineLevel && following.length === 0,
+    pageBreakBefore: (node: PdfNode, following: unknown[]) => !!node.headlineLevel && following.length === 0,
   };
 }

@@ -1,6 +1,14 @@
-import { Notice, Plugin, TAbstractFile, TFile, TFolder, MarkdownRenderer, normalizePath } from "obsidian";
+import {
+  Component,
+  MarkdownRenderer,
+  Notice,
+  Plugin,
+  TFile,
+  TFolder,
+  normalizePath,
+} from "obsidian";
 import { collectNotes } from "./collect";
-import { buildDoc, CONTENT_WIDTH, noteToContent } from "./convert";
+import { buildDoc, CONTENT_WIDTH, noteToContent, type PdfNode } from "./convert";
 import { preloadImages } from "./images";
 import { makePdf } from "./pdf";
 import { OrderModal, ResultModal, SettingsTab } from "./ui";
@@ -10,24 +18,35 @@ interface Settings {
 }
 const DEFAULTS: Settings = { newPagePerNote: true };
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
+const errorMessage = (e: unknown) => (e instanceof Error ? e.message : typeof e === "string" ? e : "unknown error");
+const isAbort = (e: unknown) => e instanceof DOMException && e.name === "AbortError";
 
 export default class PdfPrinterPlugin extends Plugin {
   settings: Settings = { ...DEFAULTS };
 
   async onload() {
-    this.settings = { ...DEFAULTS, ...(await this.loadData()) };
+    const data = (await this.loadData()) as Partial<Settings> | null;
+    this.settings = { ...DEFAULTS, ...data };
     this.addSettingTab(new SettingsTab(this.app, this));
 
     this.registerEvent(
-      this.app.workspace.on("file-menu", (menu, file: TAbstractFile) => {
+      this.app.workspace.on("file-menu", (menu, file) => {
         if (file instanceof TFile && file.extension === "md") {
           menu.addItem((i) =>
-            i.setTitle("Print to PDF").setIcon("file-output").onClick(() => this.printNote(file)),
+            i
+              .setTitle("Print to PDF")
+              .setIcon("file-output")
+              .onClick(() => {
+                void this.printNote(file);
+              }),
           );
         } else if (file instanceof TFolder) {
           menu.addItem((i) =>
-            i.setTitle("Print folder to PDF").setIcon("file-output").onClick(() => this.printFolder(file)),
+            i
+              .setTitle("Print folder to PDF")
+              .setIcon("file-output")
+              .onClick(() => this.printFolder(file)),
           );
         }
       }),
@@ -39,7 +58,7 @@ export default class PdfPrinterPlugin extends Plugin {
       checkCallback: (checking) => {
         const f = this.app.workspace.getActiveFile();
         if (!f || f.extension !== "md") return false;
-        if (!checking) this.printNote(f);
+        if (!checking) void this.printNote(f);
         return true;
       },
     });
@@ -72,20 +91,22 @@ export default class PdfPrinterPlugin extends Plugin {
     }
     const parent = folder.parent && folder.parent.path !== "/" ? folder.parent.path + "/" : "";
     const name = folder.isRoot() ? this.app.vault.getName() : folder.name;
-    new OrderModal(this.app, files, this.settings.newPagePerNote, (ordered, newPage) =>
-      this.run(ordered, parent + name + ".pdf", newPage),
-    ).open();
+    new OrderModal(this.app, files, this.settings.newPagePerNote, (ordered, newPage) => {
+      void this.run(ordered, parent + name + ".pdf", newPage);
+    }).open();
   }
 
   private async run(files: TFile[], outPath: string, newPage: boolean) {
     const notice = new Notice("Creating PDF …", 0);
-    const host = document.body.createDiv();
-    host.addClass("pdf-printer-host");
+    const host = document.body.createDiv({ cls: "pdf-printer-host" });
+    // Eigene, kurzlebige Component statt der Plugin-Instanz (vermeidet Speicherlecks).
+    const component = new Component();
+    component.load();
     try {
-      const notes = [];
+      const notes: PdfNode[][] = [];
       for (let i = 0; i < files.length; i++) {
         notice.setMessage(`PDF: note ${i + 1}/${files.length} – ${files[i].basename}`);
-        notes.push(await this.renderNote(files[i], host));
+        notes.push(await this.renderNote(files[i], host, component));
       }
       notice.setMessage("Writing PDF …");
       const buf = await makePdf(buildDoc(notes, newPage));
@@ -97,19 +118,20 @@ export default class PdfPrinterPlugin extends Plugin {
       new Notice(`PDF saved: ${path}`);
       await this.share(path, buf);
     } catch (e) {
-      console.error("PDF Printer", e);
+      console.error("Multi-Note PDF Printer", e);
       notice.hide();
-      new Notice("PDF error: " + (e && e.message ? e.message : e), 8000);
+      new Notice("PDF error: " + errorMessage(e), 8000);
     } finally {
+      component.unload();
       host.remove();
     }
   }
 
-  private async renderNote(file: TFile, host: HTMLElement) {
+  private async renderNote(file: TFile, host: HTMLElement, component: Component) {
     const raw = await this.app.vault.cachedRead(file);
-    const md = raw.replace(/^﻿?---\r?\n[\s\S]*?\r?\n---[ \t]*(\r?\n|$)/, "");
+    const md = raw.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---[ \t]*(\r?\n|$)/, "");
     const el = host.createDiv();
-    await MarkdownRenderer.render(this.app, md, el, file.path, this);
+    await MarkdownRenderer.render(this.app, md, el, file.path, component);
     // auf asynchron gerenderte Einbettungen warten (max. ~3 s)
     for (let i = 0; i < 30; i++) {
       if (!el.querySelector(".internal-embed:not(.is-loaded)")) break;
@@ -123,9 +145,9 @@ export default class PdfPrinterPlugin extends Plugin {
   private async nativeShare(path: string, buf: ArrayBuffer): Promise<boolean> {
     const name = path.split("/").pop() || "notes.pdf";
     const file = new File([buf], name, { type: "application/pdf" });
-    const nav: any = navigator;
-    if (!nav.share || (nav.canShare && !nav.canShare({ files: [file] }))) return false;
-    await nav.share({ files: [file], title: name });
+    if (typeof navigator.share !== "function") return false;
+    if (typeof navigator.canShare === "function" && !navigator.canShare({ files: [file] })) return false;
+    await navigator.share({ files: [file], title: name });
     return true;
   }
 
@@ -133,14 +155,14 @@ export default class PdfPrinterPlugin extends Plugin {
     try {
       if (await this.nativeShare(path, buf)) return;
     } catch (e) {
-      if (e && e.name === "AbortError") return; // vom Nutzer abgebrochen
+      if (isAbort(e)) return; // vom Nutzer abgebrochen
     }
     // Teilen nicht automatisch möglich: Dialog mit Button (frische Nutzeraktion)
     new ResultModal(this.app, path, async () => {
       try {
         return await this.nativeShare(path, buf);
       } catch (e) {
-        return e && e.name === "AbortError";
+        return isAbort(e);
       }
     }).open();
   }

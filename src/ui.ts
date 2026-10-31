@@ -1,4 +1,4 @@
-import { App, Modal, Notice, PluginSettingTab, Setting, TFile } from "obsidian";
+import { App, Modal, Notice, PluginSettingTab, Setting, TFile, type SettingDefinitionItem } from "obsidian";
 import type PdfPrinterPlugin from "./main";
 
 export class OrderModal extends Modal {
@@ -74,8 +74,8 @@ export class ResultModal extends Modal {
       )
       .addButton((b) =>
         b.setButtonText("Open").onClick(() => {
-          const fn = (this.app as any).openWithDefaultApp;
-          if (fn) fn.call(this.app, this.path);
+          const app = this.app as App & { openWithDefaultApp?: (path: string) => Promise<void> };
+          if (app.openWithDefaultApp) void app.openWithDefaultApp(this.path);
           else new Notice("Open not available.");
         }),
       );
@@ -91,6 +91,18 @@ export class SettingsTab extends PluginSettingTab {
     super(app, plugin);
   }
 
+  // Obsidian >= 1.13: deklarative Einstellungen (durchsuchbar in der Einstellungssuche).
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    return [
+      {
+        name: "Start each note on a new page",
+        desc: "Off: notes are placed one after another without page breaks.",
+        control: { type: "toggle", key: "newPagePerNote", defaultValue: true },
+      },
+    ];
+  }
+
+  // Rückfall für ältere Obsidian-Versionen.
   display() {
     const { containerEl } = this;
     containerEl.empty();

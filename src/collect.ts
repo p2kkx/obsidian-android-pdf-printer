@@ -1,4 +1,4 @@
-import { TAbstractFile, TFile, TFolder } from "obsidian";
+import { TFile, TFolder } from "obsidian";
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
@@ -6,7 +6,7 @@ const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "bas
 export function collectNotes(folder: TFolder): TFile[] {
   const files: TFile[] = [];
   const subs: TFolder[] = [];
-  for (const c of folder.children as TAbstractFile[]) {
+  for (const c of folder.children) {
     if (c.name.startsWith(".")) continue;
     if (c instanceof TFolder) subs.push(c);
     else if (c instanceof TFile && c.extension === "md") files.push(c);

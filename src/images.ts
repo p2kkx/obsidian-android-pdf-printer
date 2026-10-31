@@ -6,9 +6,15 @@ const MAX_DIM = 1600;
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    const t = setTimeout(() => reject(new Error("timeout")), 10000);
-    img.onload = () => { clearTimeout(t); resolve(img); };
-    img.onerror = () => { clearTimeout(t); reject(new Error("load error")); };
+    const t = window.setTimeout(() => reject(new Error("timeout")), 10000);
+    img.onload = () => {
+      window.clearTimeout(t);
+      resolve(img);
+    };
+    img.onerror = () => {
+      window.clearTimeout(t);
+      reject(new Error("load error"));
+    };
     img.src = src;
   });
 }
@@ -29,20 +35,23 @@ export async function preloadImages(root: Element): Promise<Map<Element, ImgInfo
       }
       const img = await loadImage(src);
       if (blobUrl) URL.revokeObjectURL(blobUrl);
-      const nw = img.naturalWidth, nh = img.naturalHeight;
+      const nw = img.naturalWidth;
+      const nh = img.naturalHeight;
       if (!nw || !nh) continue;
       const k = Math.min(1, MAX_DIM / Math.max(nw, nh));
-      const w = Math.round(nw * k), h = Math.round(nh * k);
-      const canvas = document.createElement("canvas");
+      const w = Math.round(nw * k);
+      const h = Math.round(nh * k);
+      const canvas = createEl("canvas");
       canvas.width = w;
       canvas.height = h;
       const ctx = canvas.getContext("2d");
+      if (!ctx) continue;
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(0, 0, w, h);
       ctx.drawImage(img, 0, 0, w, h);
       map.set(el, { data: canvas.toDataURL("image/jpeg", 0.88), w, h });
     } catch (e) {
-      console.warn("PDF Printer: Bild übersprungen", e);
+      console.warn("Multi-Note PDF Printer: image skipped", e);
     }
   }
   return map;

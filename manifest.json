@@ -1,0 +1,10 @@
+{
+  "id": "multi-note-pdf-printer",
+  "name": "Multi-Note PDF Printer",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "Print notes or whole folders to a single PDF with selectable text, optionally starting each note on a new page.",
+  "author": "p2kkx",
+  "authorUrl": "https://github.com/p2kkx",
+  "isDesktopOnly": false
+}

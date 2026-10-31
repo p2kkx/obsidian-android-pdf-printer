@@ -1,0 +1,7 @@
+.pdf-printer-host {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 800px;
+  pointer-events: none;
+}

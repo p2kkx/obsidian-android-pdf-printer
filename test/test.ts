@@ -6,12 +6,12 @@ import { makePdf } from "../src/pdf";
 const PNG =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
-function note(html: string, imgs = true) {
+function note(html: string, imgs = true, title?: string) {
   const dom = new JSDOM(`<div id="r">${html}</div>`);
   const root = dom.window.document.getElementById("r");
   const images = new Map();
   if (imgs) for (const i of Array.from(root.querySelectorAll("img"))) images.set(i, { data: PNG, w: 400, h: 300 });
-  return noteToContent(root, { images, maxW: CONTENT_WIDTH });
+  return noteToContent(root, { images, maxW: CONTENT_WIDTH }, title);
 }
 
 const mk1 = () => note(`
@@ -32,8 +32,17 @@ const mk1 = () => note(`
 <div class="callout"><div class="callout-title"><div class="callout-icon"><svg></svg></div><div class="callout-title-inner">Hinweis</div></div><div class="callout-content"><p>Callout Inhalt</p></div></div>
 <p>Skip <span class="internal-embed" src="doc.pdf">PDFEMBED</span> Ende.</p>
 `);
-const mk2 = () => note(`<h1>Zweite Notiz</h1><p>Inhalt zwei.</p>`);
-const mk3 = () => note(`<h1>Dritte Notiz</h1><p>Inhalt drei.</p>`);
+const mk2 = () => note(`<h1>Zweite Notiz</h1><p>Inhalt zwei.</p>`, true, "Zweite Notiz");
+const mk3 = () => note(`<h1>Dritte Notiz</h1><p>Inhalt drei.</p>`, true, "Dateiname drei");
+
+function assert(c: unknown, msg: string) { if (!c) throw new Error(msg); }
+{
+  const a = mk2();
+  assert(a[0].text === "Zweite Notiz" && a[0].fontSize === 26, "Titel fehlt");
+  assert(!a.slice(1).some((b) => b.headlineLevel === 1), "doppeltes H1 nicht entfernt");
+  const b = mk3();
+  assert(b[0].text === "Dateiname drei" && b[1].headlineLevel === 1, "abweichendes H1 muss bleiben");
+}
 
 async function main() {
   mkdirSync("test/out", { recursive: true });

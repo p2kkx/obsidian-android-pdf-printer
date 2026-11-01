@@ -332,8 +332,14 @@ function tableBlock(el: Element, ctx: Ctx): PdfNode[] {
   }];
 }
 
-export function noteToContent(root: Element, ctx: Ctx): PdfNode[] {
-  return blocksOf(root, ctx);
+export function noteToContent(root: Element, ctx: Ctx, title?: string): PdfNode[] {
+  if (!title) return blocksOf(root, ctx);
+  // Erstes H1 weglassen, wenn es nur den Dateinamen wiederholt
+  const first = root.querySelector("h1");
+  if (first && first.textContent?.trim() === title.trim()) first.remove();
+  const blocks = blocksOf(root, ctx);
+  // Dateiname als "H0": größer und wichtiger als jedes H1
+  return [{ text: title, fontSize: 26, bold: true, margin: [0, 0, 0, 12], headlineLevel: 0 }, ...blocks];
 }
 
 // ---- Dokument --------------------------------------------------------------
@@ -357,6 +363,6 @@ export function buildDoc(notes: PdfNode[][], newPagePerNote: boolean): PdfNode {
     content,
     defaultStyle: { font: "Roboto", fontSize: 11, lineHeight: 1.2, color: "#000000" },
     // Überschrift nie allein am Seitenende
-    pageBreakBefore: (node: PdfNode, following: unknown[]) => !!node.headlineLevel && following.length === 0,
+    pageBreakBefore: (node: PdfNode, following: unknown[]) => node.headlineLevel != null && following.length === 0,
   };
 }

@@ -139,7 +139,7 @@ export default class PdfPrinterPlugin extends Plugin {
     }
     await sleep(100);
     const images = await preloadImages(el);
-    return noteToContent(el, { images, maxW: CONTENT_WIDTH });
+    return noteToContent(el, { images, maxW: CONTENT_WIDTH }, file.basename);
   }
 
   private async nativeShare(path: string, buf: ArrayBuffer): Promise<boolean> {
